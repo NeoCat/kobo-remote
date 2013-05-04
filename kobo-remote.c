@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -28,7 +29,7 @@ struct __attribute__((packed)) bitmapInfoHeader {
 	unsigned int	biCirImportant;
 };
 
-static int send_screen(void)
+static void send_screen(void)
 {
 	static unsigned short *pix565;
 	unsigned int w = 600, h = 800, x, y;
@@ -38,7 +39,7 @@ static int send_screen(void)
 		{"BM", fhsize+ihsize+w*h*3, 0, 0, fhsize+ihsize};
 	struct bitmapInfoHeader infoHeader =
 		{ihsize, w, h, 1, 24, 0, w*h*3, 0, 0, 0, 0};
-	int fd, ret;
+	int fd;
 
 	fd = open("/dev/fb0", O_RDONLY);
 	pix565 = mmap(NULL, w*h*2, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -63,6 +64,42 @@ static int send_screen(void)
 
 		printf("%c%c%c",
 		       (b5<<3)+(b5>>2), (g6<<2)+(g6>>4), (r5<<3)+(r5>>2));
+	}
+}
+
+
+static int get_idle(void)
+{
+	char buffer[2048];
+	unsigned long long idle;
+
+	int fd = open("/proc/stat", O_RDONLY);
+	if (fd < 0)
+		return -1;
+	int ret = read(fd, buffer, sizeof(buffer));
+	close(fd);
+	if (ret < 0)
+		return -1;
+
+	if (sscanf(buffer, "cpu %*u %*u %*u %llu ", &idle) == 1)
+		return idle;
+
+	return -1;
+}
+
+
+static int wait_idle(void)
+{
+	int last = get_idle(), idle;
+
+	for (;;) {
+		sleep(1);
+		idle = get_idle();
+		if (idle < 0)
+			return -1;
+		if (idle - last > 50)
+			return 0;
+		last = idle;
 	}
 }
 
@@ -128,7 +165,7 @@ static void send_index(void)
 	puts("HTTP/1.0 200 OK");
 	puts("Content-type: text/html");
 	puts("");
-	puts("<html><head><title>Kobo remote</title></head><body style=\"margin:0;background-color:#888;\"><img src=\"screen\" onclick=\"document.getElementById('frm').src='tap/'+event.layerX+'/'+event.layerY;setTimeout('location.reload(true)',1000)\" align=\"left\"><a href=\"/\">Refresh</a><br><iframe id='frm' border=0 marginwidth=0 marginheight=0 height=24 width=80 frameborder=0></iframe></body></html>");
+	puts("<html><head><title>Kobo remote</title></head><body style=\"margin:0;background-color:#888;\"><img src=\"screen\" onclick=\"document.getElementById('frm').src='tap/'+event.layerX+'/'+event.layerY;setTimeout('location.href.indexOf(\\'wait\\')<0?location.href=\\'wait\\':location.reload(true)',200)\" align=\"left\"><a href=\"/\">Refresh</a><br><iframe id='frm' border=0 marginwidth=0 marginheight=0 height=24 width=80 frameborder=0></iframe></body></html>");
 }
 
 static void send_error(void)
@@ -151,6 +188,10 @@ int main()
 		send_index();
 	else if (strcmp("/screen", buffer) == 0)
 		send_screen();
+	else if (strcmp("/wait", buffer) == 0) {
+		wait_idle();
+		send_index();
+	}
 	else if (sscanf(buffer, "/tap/%d/%d", &x, &y) == 2)
 		tap_screen(x, y);
 	else

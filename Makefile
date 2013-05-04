@@ -1,6 +1,6 @@
 TARGET=kobo-remote tap-screen
 CC=arm-none-linux-gnueabi-gcc
-CFLAGS=-Os
+CFLAGS=-Os -Wall
 
 all: $(TARGET)
 
